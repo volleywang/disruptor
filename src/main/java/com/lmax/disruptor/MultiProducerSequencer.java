@@ -111,9 +111,9 @@ public final class MultiProducerSequencer extends AbstractSequencer
     @Override
     public long next(int n)
     {
-        if (n < 1)
+        if (n < 1 || n > bufferSize)
         {
-            throw new IllegalArgumentException("n must be > 0");
+            throw new IllegalArgumentException("n must be > 0 and < bufferSize");
         }
 
         long current;
@@ -133,7 +133,6 @@ public final class MultiProducerSequencer extends AbstractSequencer
 
                 if (wrapPoint > gatingSequence)
                 {
-                    waitStrategy.signalAllWhenBlocking();
                     LockSupport.parkNanos(1); // TODO, should we spin based on the wait strategy?
                     continue;
                 }

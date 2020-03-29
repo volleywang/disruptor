@@ -15,7 +15,7 @@
  */
 package com.lmax.disruptor;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
@@ -30,7 +30,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class BatchEventProcessor<T>
     implements EventProcessor
 {
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    private static final int IDLE = 0;
+    private static final int HALTED = IDLE + 1;
+    private static final int RUNNING = HALTED + 1;
+
+    private final AtomicInteger running = new AtomicInteger(IDLE);
     private ExceptionHandler<? super T> exceptionHandler = new FatalExceptionHandler();
     private final DataProvider<T> dataProvider;
     private final SequenceBarrier sequenceBarrier;
@@ -62,9 +66,9 @@ public final class BatchEventProcessor<T>
         }
 
         batchStartAware =
-                (eventHandler instanceof BatchStartAware) ? (BatchStartAware) eventHandler : null;
+            (eventHandler instanceof BatchStartAware) ? (BatchStartAware) eventHandler : null;
         timeoutHandler =
-                (eventHandler instanceof TimeoutHandler) ? (TimeoutHandler) eventHandler : null;
+            (eventHandler instanceof TimeoutHandler) ? (TimeoutHandler) eventHandler : null;
     }
 
     @Override
@@ -76,14 +80,14 @@ public final class BatchEventProcessor<T>
     @Override
     public void halt()
     {
-        running.set(false);
+        running.set(HALTED);
         sequenceBarrier.alert();
     }
 
     @Override
     public boolean isRunning()
     {
-        return running.get();
+        return running.get() != IDLE;
     }
 
     /**
@@ -109,61 +113,88 @@ public final class BatchEventProcessor<T>
     @Override
     public void run()
     {
-        if (!running.compareAndSet(false, true))
+        if (running.compareAndSet(IDLE, RUNNING))
         {
-            throw new IllegalStateException("Thread is already running");
-        }
-        sequenceBarrier.clearAlert();
+            sequenceBarrier.clearAlert();
 
-        notifyStart();
-
-        T event = null;
-        long nextSequence = sequence.get() + 1L;
-        try
-        {
-            while (true)
+            notifyStart();
+            try
             {
-                try
+                if (running.get() == RUNNING)
                 {
-                    final long availableSequence = sequenceBarrier.waitFor(nextSequence);
-                    if (batchStartAware != null)
-                    {
-                        batchStartAware.onBatchStart(availableSequence - nextSequence + 1);
-                    }
-
-                    while (nextSequence <= availableSequence)
-                    {
-                        event = dataProvider.get(nextSequence);
-                        eventHandler.onEvent(event, nextSequence, nextSequence == availableSequence);
-                        nextSequence++;
-                    }
-
-                    sequence.set(availableSequence);
-                }
-                catch (final TimeoutException e)
-                {
-                    notifyTimeout(sequence.get());
-                }
-                catch (final AlertException ex)
-                {
-                    if (!running.get())
-                    {
-                        break;
-                    }
-                }
-                catch (final Throwable ex)
-                {
-                    exceptionHandler.handleEventException(ex, nextSequence, event);
-                    sequence.set(nextSequence);
-                    nextSequence++;
+                    processEvents();
                 }
             }
+            finally
+            {
+                notifyShutdown();
+                running.set(IDLE);
+            }
         }
-        finally
+        else
         {
-            notifyShutdown();
-            running.set(false);
+            // This is a little bit of guess work.  The running state could of changed to HALTED by
+            // this point.  However, Java does not have compareAndExchange which is the only way
+            // to get it exactly correct.
+            if (running.get() == RUNNING)
+            {
+                throw new IllegalStateException("Thread is already running");
+            }
+            else
+            {
+                earlyExit();
+            }
         }
+    }
+
+    private void processEvents()
+    {
+        T event = null;
+        long nextSequence = sequence.get() + 1L;
+
+        while (true)
+        {
+            try
+            {
+                final long availableSequence = sequenceBarrier.waitFor(nextSequence);
+                if (batchStartAware != null && availableSequence >= nextSequence)
+                {
+                    batchStartAware.onBatchStart(availableSequence - nextSequence + 1);
+                }
+
+                while (nextSequence <= availableSequence)
+                {
+                    event = dataProvider.get(nextSequence);
+                    eventHandler.onEvent(event, nextSequence, nextSequence == availableSequence);
+                    nextSequence++;
+                }
+
+                sequence.set(availableSequence);
+            }
+            catch (final TimeoutException e)
+            {
+                notifyTimeout(sequence.get());
+            }
+            catch (final AlertException ex)
+            {
+                if (running.get() != RUNNING)
+                {
+                    break;
+                }
+            }
+            catch (final Throwable ex)
+            {
+                exceptionHandler.handleEventException(ex, nextSequence, event);
+                sequence.set(nextSequence);
+                nextSequence++;
+            }
+        }
+    }
+
+    private void earlyExit()
+    {
+        notifyStart();
+        notifyShutdown();
     }
 
     private void notifyTimeout(final long availableSequence)
