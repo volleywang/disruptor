@@ -16,11 +16,6 @@
 package com.lmax.disruptor;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-
-import com.lmax.disruptor.util.ThreadHints;
 
 /**
  * Variation of the {@link BlockingWaitStrategy} that attempts to elide conditional wake-ups when
@@ -30,20 +25,17 @@ import com.lmax.disruptor.util.ThreadHints;
  */
 public final class LiteBlockingWaitStrategy implements WaitStrategy
 {
-    private final Lock lock = new ReentrantLock();
-    private final Condition processorNotifyCondition = lock.newCondition();
+    private final Object mutex = new Object();
     private final AtomicBoolean signalNeeded = new AtomicBoolean(false);
 
     @Override
-    public long waitFor(long sequence, Sequence cursorSequence, Sequence dependentSequence, SequenceBarrier barrier)
+    public long waitFor(final long sequence, final Sequence cursorSequence, final Sequence dependentSequence, final SequenceBarrier barrier)
         throws AlertException, InterruptedException
     {
         long availableSequence;
         if (cursorSequence.get() < sequence)
         {
-            lock.lock();
-
-            try
+            synchronized (mutex)
             {
                 do
                 {
@@ -55,20 +47,16 @@ public final class LiteBlockingWaitStrategy implements WaitStrategy
                     }
 
                     barrier.checkAlert();
-                    processorNotifyCondition.await();
+                    mutex.wait();
                 }
                 while (cursorSequence.get() < sequence);
-            }
-            finally
-            {
-                lock.unlock();
             }
         }
 
         while ((availableSequence = dependentSequence.get()) < sequence)
         {
             barrier.checkAlert();
-            ThreadHints.onSpinWait();
+            Thread.onSpinWait();
         }
 
         return availableSequence;
@@ -79,14 +67,9 @@ public final class LiteBlockingWaitStrategy implements WaitStrategy
     {
         if (signalNeeded.getAndSet(false))
         {
-            lock.lock();
-            try
+            synchronized (mutex)
             {
-                processorNotifyCondition.signalAll();
-            }
-            finally
-            {
-                lock.unlock();
+                mutex.notifyAll();
             }
         }
     }
@@ -95,7 +78,8 @@ public final class LiteBlockingWaitStrategy implements WaitStrategy
     public String toString()
     {
         return "LiteBlockingWaitStrategy{" +
-            "processorNotifyCondition=" + processorNotifyCondition +
+            "mutex=" + mutex +
+            ", signalNeeded=" + signalNeeded +
             '}';
     }
 }

@@ -1,9 +1,8 @@
 package com.lmax.disruptor.support;
 
 import com.lmax.disruptor.EventHandler;
-import com.lmax.disruptor.LifecycleAware;
 
-public class DummyEventHandler<T> implements EventHandler<T>, LifecycleAware
+public class DummyEventHandler<T> implements EventHandler<T>
 {
     public int startCalls = 0;
     public int shutdownCalls = 0;
@@ -23,7 +22,7 @@ public class DummyEventHandler<T> implements EventHandler<T>, LifecycleAware
     }
 
     @Override
-    public void onEvent(T event, long sequence, boolean endOfBatch) throws Exception
+    public void onEvent(final T event, final long sequence, final boolean endOfBatch) throws Exception
     {
         lastEvent = event;
         lastSequence = sequence;

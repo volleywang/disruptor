@@ -16,9 +16,10 @@
 package com.lmax.disruptor.util;
 
 import com.lmax.disruptor.Sequence;
+import org.junit.jupiter.api.Test;
 
-import org.junit.Assert;
-import org.junit.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public final class UtilTest
 {
@@ -27,7 +28,7 @@ public final class UtilTest
     {
         int powerOfTwo = Util.ceilingNextPowerOfTwo(1000);
 
-        Assert.assertEquals(1024, powerOfTwo);
+        assertEquals(1024, powerOfTwo);
     }
 
     @Test
@@ -35,14 +36,14 @@ public final class UtilTest
     {
         int powerOfTwo = Util.ceilingNextPowerOfTwo(1024);
 
-        Assert.assertEquals(1024, powerOfTwo);
+        assertEquals(1024, powerOfTwo);
     }
 
     @Test
     public void shouldReturnMinimumSequence()
     {
         final Sequence[] sequences = {new Sequence(7L), new Sequence(3L), new Sequence(12L)};
-        Assert.assertEquals(3L, Util.getMinimumSequence(sequences));
+        assertEquals(3L, Util.getMinimumSequence(sequences));
     }
 
     @Test
@@ -50,6 +51,24 @@ public final class UtilTest
     {
         final Sequence[] sequences = new Sequence[0];
 
-        Assert.assertEquals(Long.MAX_VALUE, Util.getMinimumSequence(sequences));
+        assertEquals(Long.MAX_VALUE, Util.getMinimumSequence(sequences));
+    }
+
+    @Test
+    void shouldThrowErrorIfValuePassedToLog2FunctionIsNotPositive()
+    {
+        assertThrows(IllegalArgumentException.class, () -> Util.log2(0));
+        assertThrows(IllegalArgumentException.class, () -> Util.log2(-1));
+        assertThrows(IllegalArgumentException.class, () -> Util.log2(Integer.MIN_VALUE));
+    }
+
+    @Test
+    void shouldCalculateCorrectlyIntegerFlooredLog2()
+    {
+        assertEquals(0, Util.log2(1));
+        assertEquals(1, Util.log2(2));
+        assertEquals(1, Util.log2(3));
+        assertEquals(10, Util.log2(1024));
+        assertEquals(30, Util.log2(Integer.MAX_VALUE));
     }
 }
